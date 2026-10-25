@@ -1,0 +1,12 @@
+
+# Build artifacts
+/build/
+/out/
+/cmake-build-*/
+
+# Visual Studio
+/.vs/
+
+# User-specific files
+*.user
+*.suo

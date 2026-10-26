@@ -8,12 +8,29 @@
 #include <string_view>
 #include <vector>
 
+enum class BoundaryMode {
+    None,
+    All,
+    Black,
+    White
+};
+
 int main(int argc, char* argv[]) {
-    const bool boundaryMode = argc == 4 &&
-        std::string_view(argv[3]) == "--boundary";
-    if (argc < 3 || argc > 4 || (argc == 4 && !boundaryMode)) {
+    BoundaryMode boundaryMode = BoundaryMode::None;
+    if (argc == 4) {
+        const std::string_view option(argv[3]);
+        if (option == "--boundary") {
+            boundaryMode = BoundaryMode::All;
+        } else if (option == "--boundary-black") {
+            boundaryMode = BoundaryMode::Black;
+        } else if (option == "--boundary-white") {
+            boundaryMode = BoundaryMode::White;
+        }
+    }
+    if (argc < 3 || argc > 4 ||
+        (argc == 4 && boundaryMode == BoundaryMode::None)) {
         std::cerr << "Usage: svg-app <input-image> <output.svg> "
-                     "[--boundary]\n";
+                     "[--boundary | --boundary-black | --boundary-white]\n";
         return 1;
     }
 
@@ -29,13 +46,19 @@ int main(int argc, char* argv[]) {
 
     cv::Mat binary;
 
-    cv::threshold(
-        image,
-        binary,
-        0,
-        255,
-        cv::THRESH_BINARY_INV | cv::THRESH_OTSU
-    );
+    if (boundaryMode == BoundaryMode::Black) {
+        cv::threshold(image, binary, 64, 255, cv::THRESH_BINARY_INV);
+    } else if (boundaryMode == BoundaryMode::White) {
+        cv::threshold(image, binary, 192, 255, cv::THRESH_BINARY);
+    } else {
+        cv::threshold(
+            image,
+            binary,
+            0,
+            255,
+            cv::THRESH_BINARY_INV | cv::THRESH_OTSU
+        );
+    }
     std::vector<std::vector<cv::Point>> contours;
 
     cv::findContours(
@@ -58,7 +81,7 @@ int main(int argc, char* argv[]) {
         << "height=\"" << image.rows << "\" "
         << "viewBox=\"0 0 " << image.cols << ' ' << image.rows << "\">\n"
         << "  <path ";
-    if (boundaryMode) {
+    if (boundaryMode != BoundaryMode::None) {
         svg << "fill=\"none\" stroke=\"black\" stroke-width=\"1\" d=\"";
     } else {
         svg << "fill=\"black\" fill-rule=\"evenodd\" d=\"";
@@ -69,7 +92,7 @@ int main(int argc, char* argv[]) {
             continue;
         }
 
-        if (boundaryMode &&
+        if ((boundaryMode == BoundaryMode::All) &&
             image.cols > 1 &&
             image.rows > 1 &&
             cv::boundingRect(contour) == cv::Rect(0, 0, image.cols, image.rows)) {

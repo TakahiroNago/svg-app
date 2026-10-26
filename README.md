@@ -24,6 +24,7 @@ PNGなどのラスタ画像を解析し、輪郭情報を抽出してSVG形式�
 - OpenCVによる輪郭抽出
 - 抽出した輪郭のSVGファイルへの保存（穴のある図形に対応）
 - `--boundary` オプションによる、二値化した2領域の境界線のみのSVG出力
+- `--boundary-black` / `--boundary-white` オプションによる、黒または白領域の境界線のみのSVG出力
 
 ## ビルド方法
 
@@ -70,6 +71,15 @@ cmake --build build --config Release
 ```
 
 このモードでは大津の二値化で分けた領域の輪郭を黒い線で描画し、領域の塗りつぶしは行いません。画像全体を囲む外枠は出力しません。現在の入力処理はグレースケール化と二値化を行うため、カラー画像も明暗に基づいて2領域に分けられます。
+
+黒または白の領域だけの境界線を出力するには、色別のオプションを指定します。
+
+```powershell
+.\build\Release\svg-app.exe .\samples\input.png .\output-black.svg --boundary-black
+.\build\Release\svg-app.exe .\samples\input.png .\output-white.svg --boundary-white
+```
+
+色別モードではグレースケール輝度が `64` 以下の画素を黒、`192` 以上の画素を白として扱い、それぞれの領域輪郭だけを描画します。中間の輝度はどちらの領域にも含めません。
 
 ## 今後の開発予定
 

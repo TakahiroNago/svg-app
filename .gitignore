@@ -3,6 +3,8 @@
 /build/
 /out/
 /cmake-build-*/
+/build-wasm/
+/dist/
 
 # Visual Studio
 /.vs/

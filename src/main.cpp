@@ -5,11 +5,15 @@
 
 #include <fstream>
 #include <iostream>
+#include <string_view>
 #include <vector>
 
 int main(int argc, char* argv[]) {
-    if (argc != 3) {
-        std::cerr << "Usage: svg-app <input-image> <output.svg>\n";
+    const bool boundaryMode = argc == 4 &&
+        std::string_view(argv[3]) == "--boundary";
+    if (argc < 3 || argc > 4 || (argc == 4 && !boundaryMode)) {
+        std::cerr << "Usage: svg-app <input-image> <output.svg> "
+                     "[--boundary]\n";
         return 1;
     }
 
@@ -32,9 +36,7 @@ int main(int argc, char* argv[]) {
         255,
         cv::THRESH_BINARY_INV | cv::THRESH_OTSU
     );
-
     std::vector<std::vector<cv::Point>> contours;
-    std::vector<cv::Vec4i> hierarchy;
 
     cv::findContours(
         binary,
@@ -55,11 +57,42 @@ int main(int argc, char* argv[]) {
         << "width=\"" << image.cols << "\" "
         << "height=\"" << image.rows << "\" "
         << "viewBox=\"0 0 " << image.cols << ' ' << image.rows << "\">\n"
-        << "  <path fill=\"black\" fill-rule=\"evenodd\" d=\"";
+        << "  <path ";
+    if (boundaryMode) {
+        svg << "fill=\"none\" stroke=\"black\" stroke-width=\"1\" d=\"";
+    } else {
+        svg << "fill=\"black\" fill-rule=\"evenodd\" d=\"";
+    }
 
     for (const auto& contour : contours) {
         if (contour.empty()) {
             continue;
+        }
+
+        if (boundaryMode &&
+            image.cols > 1 &&
+            image.rows > 1 &&
+            cv::boundingRect(contour) == cv::Rect(0, 0, image.cols, image.rows)) {
+            bool topLeft = false;
+            bool topRight = false;
+            bool bottomLeft = false;
+            bool bottomRight = false;
+            bool onImageEdge = true;
+
+            for (const auto& point : contour) {
+                topLeft |= point == cv::Point(0, 0);
+                topRight |= point == cv::Point(image.cols - 1, 0);
+                bottomLeft |= point == cv::Point(0, image.rows - 1);
+                bottomRight |= point == cv::Point(image.cols - 1, image.rows - 1);
+                onImageEdge &= point.x == 0 ||
+                    point.x == image.cols - 1 ||
+                    point.y == 0 ||
+                    point.y == image.rows - 1;
+            }
+
+            if (onImageEdge && topLeft && topRight && bottomLeft && bottomRight) {
+                continue;
+            }
         }
 
         svg << 'M' << contour.front().x << ' ' << contour.front().y;

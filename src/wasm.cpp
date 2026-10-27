@@ -164,6 +164,7 @@ public:
             val result = makeResult();
             result.set("success", true);
             result.set("palette", describePalette(analysis_));
+            result.set("error", std::string());
             return result;
         } catch (const std::exception& e) {
             return fail(e.what());

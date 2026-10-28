@@ -1,4 +1,5 @@
 #include "converter.hpp"
+#include "engine_common.hpp"
 
 #include <emscripten/bind.h>
 #include <emscripten/val.h>
@@ -16,9 +17,6 @@ namespace {
 
 using emscripten::val;
 
-constexpr std::uint64_t kMaxPixels = 64ULL * 1024 * 1024 / 4;
-constexpr int kMaxDimension = 16384;
-
 val makeResult() {
     val result = val::object();
     result.set("success", false);
@@ -34,34 +32,10 @@ val fail(const std::string& message) {
     return result;
 }
 
-// Straight (non-premultiplied) RGBA composited over white:
-// out = (c * a + 255 * (255 - a)) / 255, rounded to nearest.
-cv::Mat rgbaToBgrOnWhite(const std::vector<std::uint8_t>& rgba, int width, int height) {
-    cv::Mat bgr(height, width, CV_8UC3);
-    const std::uint8_t* src = rgba.data();
-    for (int y = 0; y < height; ++y) {
-        auto* dst = bgr.ptr<std::uint8_t>(y);
-        for (int x = 0; x < width; ++x, src += 4, dst += 3) {
-            const unsigned a = src[3];
-            const unsigned inv = 255 - a;
-            dst[0] = static_cast<std::uint8_t>((src[2] * a + 255 * inv + 127) / 255);
-            dst[1] = static_cast<std::uint8_t>((src[1] * a + 255 * inv + 127) / 255);
-            dst[2] = static_cast<std::uint8_t>((src[0] * a + 255 * inv + 127) / 255);
-        }
-    }
-    return bgr;
-}
-
 // Validates the JS input and copies it into WASM memory in a single bulk copy.
 bool readPixels(const val& pixelData, int width, int height, cv::Mat& bgr,
                 std::string& error) {
-    if (width <= 0 || height <= 0) {
-        error = "Image width and height must be positive.";
-        return false;
-    }
-    if (width > kMaxDimension || height > kMaxDimension ||
-        static_cast<std::uint64_t>(width) * static_cast<std::uint64_t>(height) > kMaxPixels) {
-        error = "Image is too large.";
+    if (!svg_app::validateDimensions(width, height, error)) {
         return false;
     }
     if (pixelData.isNull() || pixelData.isUndefined() ||
@@ -74,20 +48,16 @@ bool readPixels(const val& pixelData, int width, int height, cv::Mat& bgr,
         error = "Pixel data is empty.";
         return false;
     }
-    const std::uint64_t expected =
-        static_cast<std::uint64_t>(width) * static_cast<std::uint64_t>(height) * 4;
-    if (byteLength != expected) {
-        error = std::format("Pixel data size mismatch: expected {} bytes (RGBA {}x{}), got {}.",
-                            expected, width, height, byteLength);
+    if (!svg_app::validateRgbaLength(byteLength, width, height, error)) {
         return false;
     }
 
-    std::vector<std::uint8_t> rgba(static_cast<std::size_t>(expected));
+    std::vector<std::uint8_t> rgba(static_cast<std::size_t>(byteLength));
     val view(emscripten::typed_memory_view(rgba.size(), rgba.data()));
     view.call<void>("set", val::global("Uint8Array").new_(pixelData["buffer"],
                                                            pixelData["byteOffset"],
                                                            pixelData["byteLength"]));
-    bgr = rgbaToBgrOnWhite(rgba, width, height);
+    bgr = svg_app::rgbaToBgrOnWhite(rgba.data(), width, height);
     return true;
 }
 

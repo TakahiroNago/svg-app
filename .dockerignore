@@ -1,0 +1,9 @@
+build/
+build-wasm/
+dist/
+out/
+cmake-build-*/
+.vs/
+node_modules/
+.git/
+*.md

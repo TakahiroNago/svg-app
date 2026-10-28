@@ -1,0 +1,47 @@
+syntax = "proto3";
+
+package svgconv.v1;
+
+option go_package = "github.com/TakahiroNago/svg-app/api/gen/svgconv/v1;svgconvv1";
+
+// Raster-to-SVG conversion engine (C++ / OpenCV).
+service SvgConverterService {
+  // Quantizes the image and returns the SVG in a single call.
+  rpc Convert(ConvertRequest) returns (ConvertResponse);
+}
+
+// Straight (non-premultiplied) RGBA pixels, row-major, same contract as the
+// browser/WASM engine. Transparent pixels are composited over white.
+message Image {
+  bytes rgba = 1;  // length must equal width * height * 4
+  int32 width = 2;
+  int32 height = 3;
+}
+
+message ConvertRequest {
+  Image image = 1;
+  // One of 2, 3, 4, 5, 6, 8, 12, 16, 24, 32.
+  int32 color_count = 2;
+  // Palette indices to keep. Empty keeps every color.
+  repeated int32 kept_colors = 3;
+  // Draw outlines only instead of filled regions.
+  bool boundary = 4;
+}
+
+message PaletteColor {
+  int32 index = 1;
+  string hex = 2;  // "#rrggbb"
+  uint64 area = 3;  // pixel count
+}
+
+message ConvertResponse {
+  string svg = 1;
+  uint64 contour_count = 2;
+  // Largest area first, same order as the WASM engine.
+  repeated PaletteColor palette = 3;
+}
+
+// Errors are reported through gRPC status codes:
+//   INVALID_ARGUMENT    - bad dimensions, size mismatch, unsupported color count
+//   RESOURCE_EXHAUSTED  - image exceeds engine limits
+//   INTERNAL            - unexpected engine failure

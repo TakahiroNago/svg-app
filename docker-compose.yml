@@ -1,0 +1,29 @@
+services:
+  cpp-engine:
+    build:
+      context: .
+      dockerfile: docker/cpp-engine.Dockerfile
+    environment:
+      SVG_GRPC_ADDR: 0.0.0.0:50051
+    healthcheck:
+      test: ["CMD", "bash", "-c", "exec 3<>/dev/tcp/127.0.0.1/50051"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+    # Bound to localhost only so the engine is reachable for debugging but not from the LAN.
+    ports:
+      - "127.0.0.1:50051:50051"
+
+  api:
+    build:
+      context: .
+      dockerfile: docker/api.Dockerfile
+    environment:
+      API_ADDR: :8080
+      ENGINE_ADDR: cpp-engine:50051
+      ALLOWED_ORIGINS: http://localhost:5173
+    depends_on:
+      cpp-engine:
+        condition: service_healthy
+    ports:
+      - "127.0.0.1:8080:8080"

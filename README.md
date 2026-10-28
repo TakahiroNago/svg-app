@@ -108,6 +108,40 @@ cmake --build build --config Release
 - フロントエンド：React / TypeScript
 - 変換処理：C++ / OpenCV / WebAssembly
 
+## バックエンド（Go API + gRPC）
+
+ブラウザ内WASM変換とは別に、サーバー経由の変換経路を用意しています。
+
+```
+React (任意) → HTTP/REST → Go API (api/) → gRPC → C++ エンジン (server/)
+```
+
+- `proto/svgconv/v1/svgconv.proto`：gRPC定義（`Convert`）。画像は非乗算RGBAで送ります（WASM版と同じ契約）。
+- `server/grpc_server.cpp`：`svg-converter` ライブラリを呼び出すC++ gRPCサーバー（`-DSVG_BUILD_SERVER=ON`）。
+- `src/engine_common.*`：WASMとサーバーで共有する入力検証とRGBA→BGR変換。
+- `api/`：Go REST API（`POST /api/v1/convert`、`GET /healthz`）。PNG/JPEGのデコードと入力制限を担当します。
+
+### ローカル起動（Docker Compose）
+
+```bash
+docker compose up -d --build        # C++エンジン(:50051) と API(:8080) を起動
+curl -F file=@samples/logo.png -F colors=8 http://localhost:8080/api/v1/convert
+docker compose down
+```
+
+### テスト
+
+```bash
+bash scripts/gen-proto.sh                                    # proto の lint と Go コード生成
+bash scripts/go.sh go test -race ./...                       # Go 単体テスト
+docker build --target test -f docker/cpp-engine.Dockerfile . # C++ 単体テスト
+bash scripts/integration-test.sh                             # 統合テスト（要 docker compose up）
+node --test tests/wasm.test.mjs                              # WASMテスト
+node --test tests/e2e/parity.test.mjs                        # WASMとgRPCエンジンの出力一致確認
+```
+
+GitHub Actions（`.github/workflows/ci.yml`）で proto、Go、C++、Compose統合テストを実行します。WASMテストとパリティテストはEmscripten環境が必要なため、ローカル実行です。
+
 ## 今後の開発予定
 
 - 白黒ロゴやイラストの変換品質の改善

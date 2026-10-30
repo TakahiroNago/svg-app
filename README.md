@@ -102,32 +102,105 @@ cmake --build build --config Release
 
 ## Web版
 
-本プロジェクトの変換コアをWebAssembly経由で利用するWebアプリも開発しています。
+本プロジェクトの変換コアを利用するWebアプリ（[svg-web](https://github.com/TakahiroNago/svg-web)）も開発しています。同じ変換コアを、ブラウザ内とサーバー側の2つの経路から利用できます。
 
-- 公開デモ：https://svg.art-full-stack.com/
-- フロントエンド：React / TypeScript
-- 変換処理：C++ / OpenCV / WebAssembly
+| 公開環境 | 変換方式 | URL |
+| --- | --- | --- |
+| Cloudflare Pages版（デモ） | ブラウザ内変換（WebAssembly）。画像はサーバーへ送信されません | https://svg.art-full-stack.com/ |
+| AWS版（EC2） | サーバー側変換（Go REST API → gRPC → C++）。画像はサーバーへ送信されます | https://aws-svg.art-full-stack.com/ |
 
-## バックエンド（Go API + gRPC）
+- フロントエンド：React / TypeScript / Vite
+- 変換処理：C++20 / OpenCV（WebAssembly、またはgRPCサーバー）
 
-ブラウザ内WASM変換とは別に、サーバー経由の変換経路を用意しています。
+## バックエンド（Go REST API + C++ gRPC）
 
+C++で実装した画像変換エンジンを、Go REST API経由で利用できるバックエンドを実装しています。
+
+### アーキテクチャ
+
+AWS版では、次の構成でサーバー側変換を行います。
+
+```text
+Browser
+   |
+   | HTTPS
+   v
+Host Nginx (EC2 / HTTPS終端)
+   |
+   | Reverse Proxy
+   v
+Frontend Nginx (Docker / 静的ファイル配信)
+   |
+   | /api/*
+   v
+Go REST API (デコード・入力制限)
+   |
+   | gRPC
+   v
+C++ gRPC Server
+   |
+   v
+C++ / OpenCV
+SVG Conversion Engine
 ```
-React (任意) → HTTP/REST → Go API (api/) → gRPC → C++ エンジン (server/)
-```
 
-- `proto/svgconv/v1/svgconv.proto`：gRPC定義（`Convert`）。画像は非乗算RGBAで送ります（WASM版と同じ契約）。
-- `server/grpc_server.cpp`：`svg-converter` ライブラリを呼び出すC++ gRPCサーバー（`-DSVG_BUILD_SERVER=ON`）。
-- `src/engine_common.*`：WASMとサーバーで共有する入力検証とRGBA→BGR変換。
-- `api/`：Go REST API（`POST /api/v1/convert`、`GET /healthz`）。PNG/JPEGのデコードと入力制限を担当します。
+- `proto/svgconv/v1/svgconv.proto`：gRPCサービスとメッセージの定義。画像はWebAssembly版と同じ入力形式（非乗算RGBA）で受け渡します
+- `server/grpc_server.cpp`：`svg-converter` ライブラリを呼び出すC++ gRPCサーバー
+- `src/engine_common.*`：WebAssembly版とgRPCサーバーで共通の入力検証と、RGBAからBGRへの変換処理
+- `api/`：Go REST API。PNG/JPEGのデコード、入力制限、変換リクエストを処理
+- `docker-compose.yml`：Go APIとC++ gRPCサーバーをコンテナとして起動
 
-### ローカル起動（Docker Compose）
+### API
+
+| メソッド | エンドポイント | 用途 |
+|---|---|---|
+| GET | `/healthz` | ヘルスチェック |
+| POST | `/api/v1/convert` | 画像をSVGに変換 |
+
+### Docker Composeによるローカル起動
 
 ```bash
-docker compose up -d --build        # C++エンジン(:50051) と API(:8080) を起動
-curl -F file=@samples/logo.png -F colors=8 http://localhost:8080/api/v1/convert
+docker compose up -d --build
+
+curl -F file=@samples/logo.png \
+     -F colors=8 \
+     http://localhost:8080/api/v1/convert
+
 docker compose down
 ```
+
+### ネットワーク構成
+
+Go APIとC++ gRPCサーバーは、Docker Composeのネットワーク内で通信します。APIとgRPCのポートはホストのループバックアドレスにバインドし、外部から直接アクセスできない構成にしています。
+
+AWS版では、ホスト側NginxでHTTPSを終端し、フロントエンドのNginxが `/api/` へのリクエストをGo APIに転送します。
+
+## AWSデプロイ・運用
+
+AWS EC2上にDocker環境を構築し、フロントエンド、Go REST API、C++ gRPCサーバーをDocker Composeで管理しています。
+
+### 構成
+
+- AWS EC2（Ubuntu Server 24.04）
+- Docker Engine / Docker Compose
+- ホスト側Nginx（HTTPS終端）
+- Reactフロントエンドを配信するNginx（`/api/` をGo APIへ転送）
+- Go REST API
+- C++ gRPCサーバー
+
+### デプロイ
+
+- **フロントエンド：** [svg-web](https://github.com/TakahiroNago/svg-web) のGitHub Actionsから、AWS Systems Manager経由で自動デプロイします。デプロイ後に、フロントエンドとAPI（`/api/healthz`）のヘルスチェックと、公開中のビルドの変換方式を確認します。
+- **Go REST API・C++ gRPCサーバー：** フロントエンドのデプロイ時には再起動しない構成です。更新は手動で行っています。
+
+### 監視
+
+- CloudWatchでEC2のステータスチェックを監視
+- アラーム発生時にSNSでメール通知
+
+### 動作確認
+
+AWS版で、ブラウザからの画像アップロード、Go REST API経由でのC++画像変換エンジンの呼び出し、変換されたSVGの表示・ダウンロードまでの一連の処理が動作することを確認しています。
 
 ### テスト
 
@@ -140,13 +213,15 @@ node --test tests/wasm.test.mjs                              # WASMテスト
 node --test tests/e2e/parity.test.mjs                        # WASMとgRPCエンジンの出力一致確認
 ```
 
-GitHub Actions（`.github/workflows/ci.yml`）で proto、Go、C++、Compose統合テストを実行します。WASMテストとパリティテストはEmscripten環境が必要なため、ローカル実行です。
+GitHub Actions（`.github/workflows/ci.yml`）では、protoのlint、Goの単体テスト、C++の単体テスト、Docker Composeによる統合テストを実行します。
+
+WASMテストと、WebAssembly版とgRPC版の変換結果の一致確認（`parity.test.mjs`）は、ローカルで実行します。
 
 ## 今後の開発予定
 
 - 白黒ロゴやイラストの変換品質の改善
-- サンプル画像を使用した変換結果の検証
-- 自動テストの導入
+- サンプル画像による変換結果の検証
+- Go REST API・C++ gRPCサーバーのデプロイの自動化
 
 ## ライセンス
 

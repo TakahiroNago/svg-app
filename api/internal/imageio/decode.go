@@ -16,7 +16,7 @@ import (
 const (
 	MaxFileBytes = 20 * 1024 * 1024
 	MaxSide      = 4096
-	MaxPixels    = 4_000_000
+	MaxPixels    = 9_000_000
 )
 
 var (

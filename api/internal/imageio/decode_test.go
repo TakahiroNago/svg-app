@@ -69,7 +69,7 @@ func TestDecodeRejectsOversizedDimensions(t *testing.T) {
 	if _, err := Decode(data); !errors.Is(err, ErrTooLarge) {
 		t.Fatalf("side: got %v, want ErrTooLarge", err)
 	}
-	data = encodePNG(t, image.NewGray(image.Rect(0, 0, 2001, 2000)))
+	data = encodePNG(t, image.NewGray(image.Rect(0, 0, 3001, 3000)))
 	if _, err := Decode(data); !errors.Is(err, ErrTooLarge) {
 		t.Fatalf("pixels: got %v, want ErrTooLarge", err)
 	}

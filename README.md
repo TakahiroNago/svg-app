@@ -191,7 +191,11 @@ AWS EC2上にDocker環境を構築し、フロントエンド、Go REST API、C+
 ### デプロイ
 
 - **フロントエンド：** [svg-web](https://github.com/TakahiroNago/svg-web) のGitHub Actionsから、AWS Systems Manager経由で自動デプロイします。デプロイ後に、フロントエンドとAPI（`/api/healthz`）のヘルスチェックと、公開中のビルドの変換方式を確認します。
-- **Go REST API・C++ gRPCサーバー：** フロントエンドのデプロイ時には再起動しない構成です。更新は手動で行っています。
+- **Go REST API・C++ gRPCサーバー：** このリポジトリのGitHub Actions（`.github/workflows/deploy.yml`）から、AWS Systems Manager経由で自動デプロイします。`main` でCIが成功した後に実行され、手動でも実行できます。
+  - EC2上で `scripts/deploy-backend.sh` を実行します。APIとエンジンのイメージに入るファイル（`api/`、`server/`、`src/`、`proto/`、`docker/`、`CMakeLists.txt`、`docker-compose.yml`）に変更がなければ、何も再ビルドしません。
+  - 再ビルド後にAPI（`/healthz`）、フロントエンドのNginx経由（`/api/healthz`）、公開URLの順に確認し、応答がなければ直前のイメージに戻します。
+  - 更新中は変換APIが一時的に利用できなくなります。フロントエンドのデプロイ時には、APIとエンジンは再起動しません。
+  - リポジトリのSecretsに `AWS_ACCESS_KEY_ID` と `AWS_SECRET_ACCESS_KEY`（svg-webのデプロイと同じ権限）が必要です。EC2上の配置先が `/home/ubuntu/apps/svg-app` でない場合は、リポジトリの変数 `SVG_APP_DIR` に設定します。
 
 ### 監視
 
@@ -221,7 +225,6 @@ WASMテストと、WebAssembly版とgRPC版の変換結果の一致確認（`par
 
 - 白黒ロゴやイラストの変換品質の改善
 - サンプル画像による変換結果の検証
-- Go REST API・C++ gRPCサーバーのデプロイの自動化
 
 ## ライセンス
 

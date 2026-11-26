@@ -1,0 +1,127 @@
+name: Deploy backend to AWS
+
+# Updates the Go REST API and the C++ gRPC engine on the EC2 instance that also serves svg-web.
+# The frontend has its own deployment in the svg-web repository and is not rebuilt here.
+#
+# It runs after CI has passed on main, and can be started by hand for main. What happens on the
+# instance is in scripts/deploy-backend.sh: nothing is rebuilt when no file of the two images
+# changed, and the previous images are put back when the new ones do not answer.
+
+on:
+  workflow_run:
+    workflows: [CI]
+    types: [completed]
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: svg-app-backend-deploy
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    name: Deploy to EC2 through SSM
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    if: >-
+      (github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main') ||
+      (github.event_name == 'workflow_run' &&
+       github.event.workflow_run.conclusion == 'success' &&
+       github.event.workflow_run.event == 'push')
+
+    env:
+      AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}
+      AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+      AWS_DEFAULT_REGION: ap-southeast-2
+      INSTANCE_ID: i-0f21053ec32e7d409
+      # Checkout of this repository on the instance. svg-web is expected next to it.
+      APP_DIR: ${{ vars.SVG_APP_DIR || '/home/ubuntu/apps/svg-app' }}
+      # The commit CI passed, or the commit the manual run was started for.
+      DEPLOY_SHA: ${{ github.event.workflow_run.head_sha || github.sha }}
+
+    steps:
+      - name: Check the inputs
+        run: |
+          set -eu
+          if ! printf '%s' "$DEPLOY_SHA" | grep -Eq '^[0-9a-f]{40}$'; then
+            echo "Unexpected commit id: $DEPLOY_SHA"
+            exit 1
+          fi
+          if ! printf '%s' "$APP_DIR" | grep -Eq '^/[A-Za-z0-9._/-]+$'; then
+            echo "Unexpected application directory: $APP_DIR"
+            exit 1
+          fi
+
+      - name: Verify AWS credentials
+        run: |
+          set -eu
+          aws sts get-caller-identity > /dev/null
+
+      - name: Deploy
+        run: |
+          set -eu
+
+          # The commit must be on main. Git runs as the owner of the checkout; the script runs
+          # as root because it drives Docker.
+          PARAMETERS=$(jq -n --arg dir "$APP_DIR" --arg sha "$DEPLOY_SHA" '{
+            commands: [
+              "set -eu",
+              "cd \($dir)",
+              "PREVIOUS=$(sudo -u ubuntu -H git rev-parse HEAD)",
+              "sudo -u ubuntu -H git fetch origin main",
+              "sudo -u ubuntu -H git merge-base --is-ancestor \($sha) origin/main",
+              "sudo -u ubuntu -H git switch main",
+              "sudo -u ubuntu -H git merge --ff-only \($sha)",
+              "bash scripts/deploy-backend.sh \"$PREVIOUS\" \($sha)"
+            ],
+            executionTimeout: ["3000"]
+          }')
+
+          COMMAND_ID=$(aws ssm send-command \
+            --instance-ids "$INSTANCE_ID" \
+            --document-name "AWS-RunShellScript" \
+            --comment "svg-app backend $DEPLOY_SHA" \
+            --parameters "$PARAMETERS" \
+            --query 'Command.CommandId' \
+            --output text)
+
+          echo "SSM command ID: $COMMAND_ID"
+
+          show_output() {
+            aws ssm get-command-invocation \
+              --command-id "$COMMAND_ID" \
+              --instance-id "$INSTANCE_ID" \
+              --query '{Status:Status,Stdout:StandardOutputContent,Stderr:StandardErrorContent}' \
+              --output json || true
+          }
+
+          # Building the engine image on the instance can take a while when its layers changed.
+          for _ in $(seq 1 330); do
+            STATUS=$(aws ssm get-command-invocation \
+              --command-id "$COMMAND_ID" \
+              --instance-id "$INSTANCE_ID" \
+              --query 'Status' \
+              --output text 2>/dev/null || true)
+
+            case "$STATUS" in
+              Success)
+                show_output
+                echo "Deployment successful"
+                exit 0
+                ;;
+              Failed|Cancelled|TimedOut|Cancelling)
+                show_output
+                exit 1
+                ;;
+              *)
+                sleep 10
+                ;;
+            esac
+          done
+
+          echo "Timed out waiting for the SSM command"
+          show_output
+          exit 1

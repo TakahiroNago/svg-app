@@ -51,6 +51,21 @@ repo_git() {
   fi
 }
 
+# Runs a command without showing its output unless it fails. SSM keeps only the first 24,000
+# characters of what a command prints; a Docker build alone fills that, and the lines of this
+# script that say what happened, which come last, were cut off.
+quietly() {
+  local output status=0
+  output="$(mktemp)"
+  "$@" > "$output" 2>&1 || status=$?
+  if [ "$status" -ne 0 ]; then
+    log "failed ($status): $*"
+    tail -n 40 "$output"
+  fi
+  rm -f "$output"
+  return "$status"
+}
+
 wait_for() {
   local url="$1" attempts="${2:-30}"
   for _ in $(seq 1 "$attempts"); do
@@ -71,23 +86,26 @@ restart_frontend() {
     log "svg-web was not found at $svg_web_dir"
     return 1
   fi
-  (cd "$svg_web_dir" && docker compose restart web)
+  (cd "$svg_web_dir" && quietly docker compose restart web)
 }
 
 start_services() {
   # The API waits for the engine, so the engine goes first and must be healthy.
-  docker compose up -d --wait --no-deps --no-build cpp-engine
-  docker compose up -d --no-deps --no-build api
+  quietly docker compose up -d --wait --no-deps --no-build cpp-engine || return 1
+  quietly docker compose up -d --no-deps --no-build api
 }
 
 verify() {
   wait_for "$api_health_url" || return 1
+  log "the API answers at $api_health_url"
   restart_frontend || return 1
   if [ -n "$svg_web_dir" ]; then
     wait_for "$web_api_health_url" || return 1
+    log "the API answers through the frontend at $web_api_health_url"
   fi
   if [ -n "$public_health_url" ]; then
     wait_for "$public_health_url" 10 || return 1
+    log "the API answers at $public_health_url"
   fi
 }
 
@@ -124,7 +142,7 @@ for image in "${images[@]}"; do
 done
 
 log "building ${images[*]}"
-docker compose build cpp-engine api
+quietly docker compose build cpp-engine api
 
 log "starting the new containers"
 if start_services && verify; then
@@ -134,7 +152,7 @@ fi
 
 log "the new version did not come up"
 docker compose ps || true
-docker compose logs --tail 40 cpp-engine api || true
+docker compose logs --tail 20 cpp-engine api || true
 
 if [ "$have_rollback" != true ]; then
   log "there was no previous image to go back to"
